@@ -1,0 +1,120 @@
+name: macOS CI — iOS Simulator
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-ios-simulator:
+    name: Build iOS (Simulator)
+    runs-on: macos-latest
+    env:
+      # Ajustez ces valeurs si nécessaire
+      SCHEME: iOSApp
+      PROJECT_PATH: iosApp/iosApp.xcodeproj
+      # Si vous utilisez un workspace, décommentez et ajustez la ligne suivante
+      # WORKSPACE_PATH: iosApp/iosApp.xcworkspace
+      GRADLE_TASK: assemble
+      SIMULATOR_NAME: "iPhone 14"
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Run Gradle tasks
+        run: |
+          chmod +x ./gradlew
+          ./gradlew $GRADLE_TASK --no-daemon
+
+      - name: Build iOS app with xcodebuild
+        run: |
+          mkdir -p "$DERIVED_DATA"
+          if [ -n "${WORKSPACE_PATH:-}" ]; then
+            echo "Using workspace: $WORKSPACE_PATH"
+            xcodebuild -workspace "$WORKSPACE_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=latest" -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          else
+            echo "Using project: $PROJECT_PATH"
+            xcodebuild -project "$PROJECT_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=latest" -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          fi
+
+      - name: Find built .app
+        id: find_app
+        run: |
+          APP_PATH=$(find "$DERIVED_DATA/Build/Products" -name "*.app" | head -n1)
+          echo "Searching in: $DERIVED_DATA/Build/Products"
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app found in DerivedData" >&2
+            ls -la "$DERIVED_DATA" || true
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+          echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
+
+      - name: Boot simulator
+        run: |
+          set -e
+          # Boot if not already booted
+          xcrun simctl boot "$SIMULATOR_NAME" || true
+          xcrun simctl list devices | grep "$SIMULATOR_NAME" || true
+          xcrun simctl wait booted
+
+      - name: Install app on simulator
+        run: |
+          xcrun simctl install booted "${{ steps.find_app.outputs.app_path }}"
+
+      - name: Extract bundle identifier
+        id: bundle
+        run: |
+          PLIST="${{ steps.find_app.outputs.app_path }}/Info.plist"
+          if [ ! -f "$PLIST" ]; then
+            echo "Info.plist not found at $PLIST" >&2
+            exit 1
+          fi
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST")
+          echo "bundle_id=$BUNDLE_ID" >> $GITHUB_OUTPUT
+
+      - name: Launch app on simulator
+        run: |
+          xcrun simctl launch booted ${{ steps.bundle.outputs.bundle_id }} || true
+
+      - name: Take screenshot
+        run: |
+          xcrun simctl io booted screenshot screenshot.png || true
+
+      - name: Upload screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-screenshot
+          path: screenshot.png
+
+      - name: Upload DerivedData
+        uses: actions/upload-artifact@v4
+        with:
+          name: DerivedData
+          path: ${{ env.DERIVED_DATA }}
+          retention-days: 3
+
+      - name: Shutdown simulator (cleanup)
+        if: always()
+        run: |
+          xcrun simctl shutdown "$SIMULATOR_NAME" || true
