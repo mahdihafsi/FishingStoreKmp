@@ -17,7 +17,8 @@ jobs:
       # Si vous utilisez un workspace, décommentez et ajustez la ligne suivante.
       # WORKSPACE_PATH: iosApp/iosApp.xcworkspace
       GRADLE_TASK: assemble
-      SIMULATOR_NAME: "iPhone SE (3rd generation), OS=18"
+      SIMULATOR_NAME: "iPhone SE (3rd generation)"
+      SIMULATOR_OS: "18.5"
       DERIVED_DATA: ${{ github.workspace }}/DerivedData
 
     steps:
@@ -128,4 +129,4 @@ jobs:
       - name: Shutdown simulator (cleanup)
         if: always()
         run: |
-          xcrun simctl shutdown "$SIMULATOR_NAME" || true
+          xcrun simctl shutdown booted || true
