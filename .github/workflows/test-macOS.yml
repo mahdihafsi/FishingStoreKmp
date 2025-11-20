@@ -17,7 +17,7 @@ jobs:
       # Si vous utilisez un workspace, décommentez et ajustez la ligne suivante.
       # WORKSPACE_PATH: iosApp/iosApp.xcworkspace
       GRADLE_TASK: assemble
-      SIMULATOR_NAME: "iPhone 14"
+      SIMULATOR_NAME: "iPhone 16 Pro"
       DERIVED_DATA: ${{ github.workspace }}/DerivedData
 
     steps:
