@@ -6,127 +6,109 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  SIMULATOR_NAME: "ci-sim"
+  IOS_SCHEME: "iosApp"
+  IOS_PROJECT: "iosApp/iosApp.xcodeproj"
+  IOS_DEST: "platform=iOS Simulator,name=iPhone 15"
+
 jobs:
-  build-ios-simulator:
-    name: Build iOS (Simulator)
+  ios:
+    name: Build iOS app
     runs-on: macos-latest
-    env:
-      # Ajustez ces valeurs si nécessaire
-      SCHEME: iosApp
-      PROJECT_PATH: iosApp/iosApp.xcodeproj
-      # Si vous utilisez un workspace, décommentez et ajustez la ligne suivante.
-      # WORKSPACE_PATH: iosApp/iosApp.xcworkspace
-      GRADLE_TASK: assemble
-      SIMULATOR_NAME: "iPhone SE (3rd generation)"
-      SIMULATOR_OS: "18.5"
-      DERIVED_DATA: ${{ github.workspace }}/DerivedData
 
     steps:
+      # 1. Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK
+      # 2. Install Java (for Gradle / Shared KMM)
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
 
+      # 3. Gradle cache
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v3
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-            .gradle
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Run Gradle tasks
-        run: |
-          chmod +x ./gradlew
-          ./gradlew $GRADLE_TASK --no-daemon
+      # 4 — (OPTIONAL mais recommandé pour KMM)
+      - name: Gradle: Build shared KMM framework
+        run: ./gradlew :shared:assembleXCFramework
 
-      - name: Dump installed simulators (debug)
-        run: xcrun simctl list devices --json
-      
-      - name: Build iOS app with xcodebuild
+      # 5. Create & Boot simulator (robust)
+      - name: Boot/create simulator (robust)
+        env:
+          SIMULATOR_NAME: "${{ env.SIMULATOR_NAME }}"
+          TIMEOUT: "120"
         run: |
-          mkdir -p "$DERIVED_DATA"
-          # Valeurs par défaut (peuvent être surchargées via les variables d'environnement du workflow)
-          SIMULATOR_NAME="${SIMULATOR_NAME:-iPhone SE (3rd generation)}"
-          SIMULATOR_OS="${SIMULATOR_OS:-18.5}"
-          echo "Using simulator: $SIMULATOR_NAME (OS $SIMULATOR_OS)"
-          if [ -n "${WORKSPACE_PATH:-}" ]; then
-            echo "Using workspace: $WORKSPACE_PATH"
-            xcodebuild -workspace "$WORKSPACE_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator \
-              -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=$SIMULATOR_OS" \
-              -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          set -euo pipefail
+          SIM_NAME="${SIMULATOR_NAME:-ci-sim}"
+          echo "Simulator name: $SIM_NAME"
+
+          echo "Available runtimes:"
+          xcrun simctl list runtimes
+          echo "Available device types:"
+          xcrun simctl list devicetypes
+
+          EXISTING_UDID=$(xcrun simctl list devices | grep -F "$SIM_NAME (" | awk -F '[()]' '{print $2}' | tr -d ' ' || true)
+
+          if [ -n "$EXISTING_UDID" ]; then
+            echo "Found existing simulator: $EXISTING_UDID"
+            SIMUDID="$EXISTING_UDID"
           else
-            echo "Using project: $PROJECT_PATH"
-            xcodebuild -project "$PROJECT_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator \
-              -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=$SIMULATOR_OS" \
-              -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+            echo "No existing simulator, creating one..."
+            DEVICE_TYPE_ID=$(xcrun simctl list devicetypes | awk -F '[()]' '/iPhone/ {print $2; exit}' | tr -d ' ' || true)
+            RUNTIME_ID=$(xcrun simctl list runtimes | awk -F '[()]' '/iOS/ {print $2; exit}' | tr -d ' ' || true)
+
+            if [ -z "$DEVICE_TYPE_ID" ] || [ -z "$RUNTIME_ID" ]; then
+              echo "Error: cannot detect a valid device type/runtime" >&2
+              exit 1
+            fi
+
+            SIMUDID=$(xcrun simctl create "$SIM_NAME" "$DEVICE_TYPE_ID" "$RUNTIME_ID")
+            echo "Created simulator: $SIMUDID"
           fi
 
-      - name: Find built .app
-        id: find_app
-        run: |
-          APP_PATH=$(find "$DERIVED_DATA/Build/Products" -name "*.app" | head -n1)
-          echo "Searching in: $DERIVED_DATA/Build/Products"
-          if [ -z "$APP_PATH" ]; then
-            echo "No .app found in DerivedData" >&2
-            ls -la "$DERIVED_DATA" || true
-            exit 1
-          fi
-          echo "Found app: $APP_PATH"
-          echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
+          echo "Booting simulator..."
+          xcrun simctl boot "$SIMUDID" || true
 
-      - name: Boot simulator
-        run: |
-          set -e
-          # Boot if not already booted
-          xcrun simctl boot "$SIMULATOR_NAME" || true
-          xcrun simctl list devices | grep "$SIMULATOR_NAME" || true
-          xcrun simctl wait booted
+          echo "Waiting for bootstatus..."
+          xcrun simctl bootstatus "$SIMUDID" -b -t "${TIMEOUT}"
 
-      - name: Install app on simulator
-        run: |
-          xcrun simctl install booted "${{ steps.find_app.outputs.app_path }}"
+          echo "SIMUDID=$SIMUDID" >> $GITHUB_ENV
 
-      - name: Extract bundle identifier
-        id: bundle
+      # 6. Build iOS app from Xcode (Debug or Release)
+      - name: Xcode build (debug)
         run: |
-          PLIST="${{ steps.find_app.outputs.app_path }}/Info.plist"
-          if [ ! -f "$PLIST" ]; then
-            echo "Info.plist not found at $PLIST" >&2
-            exit 1
-          fi
-          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST")
-          echo "bundle_id=$BUNDLE_ID" >> $GITHUB_OUTPUT
+          xcodebuild \
+            -project $IOS_PROJECT \
+            -scheme $IOS_SCHEME \
+            -destination "platform=iOS Simulator,id=$SIMUDID" \
+            -configuration Debug \
+            clean build | xcpretty
 
-      - name: Launch app on simulator
+      # 7. (OPTIONAL) Export archive .xcarchive artifact
+      - name: Archive iOS app
         run: |
-          xcrun simctl launch booted ${{ steps.bundle.outputs.bundle_id }} || true
+          xcodebuild \
+            -project $IOS_PROJECT \
+            -scheme $IOS_SCHEME \
+            -destination "platform=iOS Simulator,id=$SIMUDID" \
+            -configuration Release \
+            -archivePath build/ios.xcarchive \
+            archive | xcpretty
 
-      - name: Take screenshot
-        run: |
-          xcrun simctl io booted screenshot screenshot.png || true
-
-      - name: Upload screenshot artifact
+      - name: Upload archive artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-screenshot
-          path: screenshot.png
-
-      - name: Upload DerivedData
-        uses: actions/upload-artifact@v4
-        with:
-          name: DerivedData
-          path: ${{ env.DERIVED_DATA }}
-          retention-days: 3
-
-      - name: Shutdown simulator (cleanup)
-        if: always()
-        run: |
-          xcrun simctl shutdown booted || true
+          name: ios-archive
+          path: build/ios.xcarchive
