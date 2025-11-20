@@ -1,0 +1,17 @@
+name: Show Xcode Schemes
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list-schemes:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: List schemes in Xcode project
+        run: |
+          echo "Listing schemes..."
+          xcodebuild -project iosApp/iosApp.xcodeproj -list
