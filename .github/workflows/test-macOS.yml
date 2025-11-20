@@ -46,27 +46,27 @@ jobs:
           chmod +x ./gradlew
           ./gradlew $GRADLE_TASK --no-daemon
 
-- name: Dump installed simulators (debug)
-  run: xcrun simctl list devices --json
-
-- name: Build iOS app with xcodebuild
-  run: |
-    mkdir -p "$DERIVED_DATA"
-    # Valeurs par défaut (peuvent être surchargées via les variables d'environnement du workflow)
-    SIMULATOR_NAME="${SIMULATOR_NAME:-iPhone SE (3rd generation)}"
-    SIMULATOR_OS="${SIMULATOR_OS:-18.5}"
-    echo "Using simulator: $SIMULATOR_NAME (OS $SIMULATOR_OS)"
-    if [ -n "${WORKSPACE_PATH:-}" ]; then
-      echo "Using workspace: $WORKSPACE_PATH"
-      xcodebuild -workspace "$WORKSPACE_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator \
-        -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=$SIMULATOR_OS" \
-        -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
-    else
-      echo "Using project: $PROJECT_PATH"
-      xcodebuild -project "$PROJECT_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator \
-        -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=$SIMULATOR_OS" \
-        -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
-    fi
+      - name: Dump installed simulators (debug)
+        run: xcrun simctl list devices --json
+      
+      - name: Build iOS app with xcodebuild
+        run: |
+          mkdir -p "$DERIVED_DATA"
+          # Valeurs par défaut (peuvent être surchargées via les variables d'environnement du workflow)
+          SIMULATOR_NAME="${SIMULATOR_NAME:-iPhone SE (3rd generation)}"
+          SIMULATOR_OS="${SIMULATOR_OS:-18.5}"
+          echo "Using simulator: $SIMULATOR_NAME (OS $SIMULATOR_OS)"
+          if [ -n "${WORKSPACE_PATH:-}" ]; then
+            echo "Using workspace: $WORKSPACE_PATH"
+            xcodebuild -workspace "$WORKSPACE_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator \
+              -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=$SIMULATOR_OS" \
+              -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          else
+            echo "Using project: $PROJECT_PATH"
+            xcodebuild -project "$PROJECT_PATH" -scheme "$SCHEME" -configuration Debug -sdk iphonesimulator \
+              -destination "platform=iOS Simulator,name=$SIMULATOR_NAME,OS=$SIMULATOR_OS" \
+              -derivedDataPath "$DERIVED_DATA" clean build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          fi
 
       - name: Find built .app
         id: find_app
