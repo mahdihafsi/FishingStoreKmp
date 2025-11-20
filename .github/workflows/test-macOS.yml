@@ -12,7 +12,7 @@ jobs:
     runs-on: macos-latest
     env:
       # Ajustez ces valeurs si nécessaire
-      SCHEME: iOSApp
+      SCHEME: iosApp
       PROJECT_PATH: iosApp/iosApp.xcodeproj
       # Si vous utilisez un workspace, décommentez et ajustez la ligne suivante.
       # WORKSPACE_PATH: iosApp/iosApp.xcworkspace
