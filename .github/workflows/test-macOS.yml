@@ -10,17 +10,12 @@ jobs:
   build-ios-simulator:
     name: Build iOS (Simulator)
     runs-on: macos-latest
+
     env:
-      # Ajustez ces valeurs si nécessaire
       SCHEME: iosApp
       PROJECT_PATH: iosApp/iosApp.xcodeproj
-      # Si vous utilisez un workspace, décommentez et ajustez la ligne suivante.
-      # WORKSPACE_PATH: iosApp/iosApp.xcworkspace
       GRADLE_TASK: assemble
       SIMULATOR_NAME: "iPhone SE (3rd generation)"
-      SIMULATOR_OS: "18.5"
-      # runner.temp cannot be used in top-level job env (causes the "Unrecognized named-value: 'runner'" error).
-      # Use github.workspace (or set runner temp inside a step) — here we use github.workspace for compatibility.
       DERIVED_DATA: ${{ github.workspace }}/DerivedData
 
     steps:
@@ -51,108 +46,69 @@ jobs:
 
       - name: Dump installed simulators (debug)
         run: xcrun simctl list devices --json
-      
-      - name: Build iOS app (produce .app in DerivedData)
-        env:
-          # Use job-level DERIVED_DATA (github.workspace) inside the step; if you prefer runner temp,
-          # set it here: DERIVED_DATA: ${{ runner.temp }}/DerivedData
-          DERIVED_DATA: ${{ env.DERIVED_DATA }}
+
+      - name: Build iOS app (xcodebuild)
         run: |
-          set -euo pipefail
           mkdir -p "$DERIVED_DATA"
-          echo "Searching for Xcode workspace/project..."
-          WORKSPACE=$(find . -maxdepth 3 -name '*.xcworkspace' -print -quit || true)
-          PROJECT=$(find . -maxdepth 3 -name '*.xcodeproj' -print -quit || true)
-          if [ -n "$WORKSPACE" ]; then
-            echo "Found workspace: $WORKSPACE"
-            SCHEME=${SCHEME:-$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null | awk '/Schemes:/{getline; print $1; exit}' || true)}
-            BUILD_CMD=(xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME")
-          elif [ -n "$PROJECT" ]; then
-            echo "Found project: $PROJECT"
-            SCHEME=${SCHEME:-$(xcodebuild -list -project "$PROJECT" 2>/dev/null | awk '/Schemes:/{getline; print $1; exit}' || true)}
-            BUILD_CMD=(xcodebuild -project "$PROJECT" -scheme "$SCHEME")
-          else
-            echo "Error: no .xcworkspace or .xcodeproj found" >&2
-            ls -la || true
-            exit 1
-          fi
-          if [ -z "$SCHEME" ]; then
-            echo "Error: could not detect an Xcode scheme. Set SCHEME in the step env." >&2
-            xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null || xcodebuild -list -project "$PROJECT" 2>/dev/null || true
-            exit 1
-          fi
-          echo "Using scheme: $SCHEME"
-          # Build for simulator (no code signing) and write logs
-          "${BUILD_CMD[@]}" -configuration Debug -sdk iphonesimulator -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO | tee build.log
-          # Locate the .app
-          APP_PATH=$(find "$DERIVED_DATA/Build/Products" -name '*.app' -print -quit || true)
-          if [ -z "$APP_PATH" ]; then
-            echo "No .app found in DerivedData" >&2
-            ls -la "$DERIVED_DATA" || true
-            echo "Last 200 lines of build log:"
-            tail -n 200 build.log || true
-            exit 1
-          fi
-          echo "Found app: $APP_PATH"
-          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+          echo "Using PROJECT_PATH=${PROJECT_PATH}"
+          echo "Using SCHEME=${SCHEME}"
+
+          xcodebuild \
+            -project "${PROJECT_PATH}" \
+            -scheme "${SCHEME}" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Find built .app
         id: find_app
         run: |
-          APP_PATH=$(find "${{ env.DERIVED_DATA }}/Build/Products" -name "*.app" | head -n1)
-          echo "Searching in: ${{ env.DERIVED_DATA }}/Build/Products"
+          APP_PATH=$(find "${DERIVED_DATA}/Build/Products" -name "*.app" | head -n1)
           if [ -z "$APP_PATH" ]; then
-            echo "No .app found in DerivedData" >&2
-            ls -la "${{ env.DERIVED_DATA }}" || true
+            echo "❌ No .app found"
+            ls -R "${DERIVED_DATA}"
             exit 1
           fi
-          echo "Found app: $APP_PATH"
+          echo "Found .app → $APP_PATH"
           echo "app_path=$APP_PATH" >> $GITHUB_OUTPUT
 
       - name: Boot simulator
         run: |
-          set -e
-          # Boot if not already booted. Prefer using device UDID for reliability; here we use the name.
-          xcrun simctl boot "$SIMULATOR_NAME" || true
-          xcrun simctl list devices | grep "$SIMULATOR_NAME" || true
-          # use bootstatus to wait reliably
-          # find UDID for the named simulator
-          SIMUDID=$(xcrun simctl list devices | awk -F '[()]' -v name="$SIMULATOR_NAME" '$0 ~ name" \\(" {print $2; exit}' | tr -d ' ' || true)
+          SIMUDID=$(xcrun simctl list devices | awk -F '[()]' -v name="$SIMULATOR_NAME" '$0 ~ name" \\(" {print $2; exit}')
           if [ -z "$SIMUDID" ]; then
-            echo "Simulator named '$SIMULATOR_NAME' not found; listing devices for debug:"
+            echo "❌ Simulator not found"
             xcrun simctl list devices
             exit 1
           fi
-          echo "Waiting for $SIMUDID to boot..."
+
+          echo "Booting → $SIMUDID"
+          xcrun simctl boot "$SIMUDID" || true
           xcrun simctl bootstatus "$SIMUDID" -b -t 120
+
           echo "SIMUDID=$SIMUDID" >> $GITHUB_ENV
 
-      - name: Install app on simulator
+      - name: Install app
         run: |
-          set -euo pipefail
           xcrun simctl install "$SIMUDID" "${{ steps.find_app.outputs.app_path }}"
 
       - name: Extract bundle identifier
         id: bundle
         run: |
-          set -euo pipefail
           PLIST="${{ steps.find_app.outputs.app_path }}/Info.plist"
-          if [ ! -f "$PLIST" ]; then
-            echo "Info.plist not found at $PLIST" >&2
-            exit 1
-          fi
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST")
           echo "bundle_id=$BUNDLE_ID" >> $GITHUB_OUTPUT
 
-      - name: Launch app on simulator
+      - name: Launch app
         run: |
-          xcrun simctl launch "$SIMUDID" ${{ steps.bundle.outputs.bundle_id }} || true
+          xcrun simctl launch "$SIMUDID" "${{ steps.bundle.outputs.bundle_id }}" || true
 
       - name: Take screenshot
         run: |
           xcrun simctl io "$SIMUDID" screenshot screenshot.png || true
 
-      - name: Upload screenshot artifact
+      - name: Upload screenshot
         uses: actions/upload-artifact@v4
         with:
           name: ios-screenshot
@@ -163,9 +119,8 @@ jobs:
         with:
           name: DerivedData
           path: ${{ env.DERIVED_DATA }}
-          retention-days: 3
 
-      - name: Shutdown simulator (cleanup)
+      - name: Shutdown simulator
         if: always()
         run: |
           xcrun simctl shutdown "$SIMUDID" || true
