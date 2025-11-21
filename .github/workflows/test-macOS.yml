@@ -41,7 +41,7 @@ jobs:
             ${{ runner.os }}-gradle-
 
       # 4 — (OPTIONAL mais recommandé pour KMM)
-      - name: Gradle: Build shared KMM framework
+      - name: Gradle - Build shared KMM framework
         run: ./gradlew :shared:assembleXCFramework
 
       # 5. Create & Boot simulator (robust)
