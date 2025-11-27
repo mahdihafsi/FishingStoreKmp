@@ -1,4 +1,3 @@
-import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -7,6 +6,7 @@ plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+
 }
 
 kotlin {
@@ -41,19 +41,41 @@ kotlin {
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
+            // Dépendances d'icônes pour la cible Android
+            implementation(libs.androidx.material.icons.core)
+            implementation(libs.androidx.material.icons.extended)
+            implementation(libs.androidx.material)
+
+
         }
         commonMain.dependencies {
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.ui)
+            implementation(compose.material) // Ajout pour Icons et material
             implementation(compose.components.resources)
             implementation(compose.components.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+            implementation("org.jetbrains.compose.material:material-icons-core:1.7.3")
+
+
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+            // Note: kotlinx-coroutines-test is not added to commonTest because
+            // the `kotlinx-coroutines-test` artifact does not provide a WASM-specific
+            // variant and causes dependency resolution issues for the `wasmJs` target.
+            // If you need coroutine test helpers on specific platforms, add the
+            // dependency to those platform test sourceSets, e.g.:
+            //
+            // jvmTest {
+            //   dependencies {
+            //     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+            //   }
+            // }
         }
     }
 }
@@ -88,4 +110,3 @@ android {
 dependencies {
     debugImplementation(compose.uiTooling)
 }
-
